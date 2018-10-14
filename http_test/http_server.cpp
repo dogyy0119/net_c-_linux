@@ -141,6 +141,109 @@ HTTP_CODE parse_headers( char* temp )
 	return NO_REQUEST;
 }
 
+HTTP_CODE parse_content( char* buffer, int& checked_index, CHECK_STATE& checkstate, int& read_index, int& start_line )
+{
+	LINE_STATUS linestatus = LINE_OK;
+	HTTP_CODE retcode = NO_REQUEST;
+	/*  主状态机，用与从 buffer 中取出所有的完整的行 */
+	while ( ( linestatus = parse_line( buffer, check_index, read_index ) ) == LINE_OK ) 
+	{
+		char* temp = buffer + start_line;
+		start_line = checked_index;
+		/* checkestatus 记录主状态机当前的状态 */
+		switch ( checkstate) 
+		{
+			case CHECK_STATE_REQUESTLINE:
+			{	
+				retcode = parser_requestline( temp, checkstate );
+				if ( retcode == BAD_REQUEST )
+				{
+					return BAD_REQUEST;
+				}
+				break;
+			}
+			case CHECK_STATE_HEADER:
+			{
+				retcode = parse_headers( temp );
+				if ( retcode == BAD_REQUEST )
+				{
+					return BAD_REQUEST;
+				}
+				else if ( retcode == GET_REQUEST )
+				{
+					return GET_REQUEST;
+				}
+				break;
+			}
+			default:
+			{
+				return INTERNAL_ERROR;
+			}
+		}
 
+	}
 
+	/* 若没有读取到一个完整的行，则表示还需要继续读取客户端数据才能进一步分析 */
+	if ( linestatus == LINE_OPEN )
+	{
+		return NO_REQUEST;
+	}
+	else 
+	{
+		return BAD_REQUEST;
+	}
+}
+
+int main( int argc, char* argv[] )
+{
+	if( argc <= 2 )
+	{
+		printf( "wrong!!!\n " );
+		return 1;
+	}
+	const char* ip = argv[1];
+	int port = atoi( argv[2]);
+	
+	struct sockaddr_in address;
+	bzero( &addres, sizeof( address ) );
+	address.sin_family = AF_INET;
+	inet_pton( AF_INET, ip, &address.sin_addr );
+	address.sin_port = htons( port );
+
+	int listenfd = socket( PF_INT, SOCK_STRESM, 0 );
+	assert( listenfd != -1 );
+	int ret = bind( listenfd, ( struct sockaddr* )&address, sizeof( address ) );
+	assert( ret != -1 );
+	ret = listen( listenfd, 5 );
+	assert( ret != -1 );
+	struct sockaddr_in clinent_address;
+	socklen_t clinet_addrlength = sizeof( client_address );
+	int fd = accept( listenfd, (struct sockaddr )&client_address, &client_addrlength);
+	if ( fd < 0 )
+	{
+		printf( "error is: %d \n", errno );
+	}
+	else 
+	{
+		char buffer[ BUFFER_SIZE ]; /* 读缓冲区 */
+		memset( buffer, '\0', BUFFER_SIZE );
+		int data_read = 0;
+		int read_index = 0;
+		int checked_index = 0;
+		int start_line = 0;
+
+		CHECK_STATE checkstate = CHECK_STATE_REQUESTLINE;
+		while(1)
+		{
+			data_read = recv( fd, buffer + read_index, BUFFER_SIZE - read_index, 0 );
+			if( data_read == -1 )
+			{
+
+			}
+		}
+		close( fd );
+	}
+	close( listenfd );
+	return 0;
+}
 
