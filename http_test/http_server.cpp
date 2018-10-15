@@ -26,30 +26,39 @@ enum LINE_STATUS
 	LINE_OPEN
 };
 
+enum HTTP_CODE{
+	NO_REQUEST,
+	GET_REQUEST,
+	BAD_REQUEST,
+	FORBIDDEN_REQUEST,
+	INTERNAL_ERROR,
+	CLOSED_CONNECTION
+};
+
 /* 为了简化问题，外面没有给客户端发送一个完整的HTTP 应答报文，而只是根据服务器的处理结果发送如下成功或者失败通知 */
 static const char* szret[] = { "I get a correct result \n", "Something wrong \n " };
 
 /* 从状态机，用于解析出一行内容 */
-LINE_STATUS parse_line( char* buffer, int& cheched_index, int& read_index )
+LINE_STATUS parse_line( char* buffer, int& checked_index, int& read_index )
 {
 	char temp;
 	/* */
 	for ( ; checked_index < read_index; ++checked_index )
 	{
 		/* 获得当前要分析的字节 */
-		temp = buffer[ chacked_index ];
+		temp = buffer[ checked_index ];
 		
 		/* 如果当前的字节是 "\r"，则说明可能读取到了一个完整的行 */
 		if ( temp == '\r' ) 
 		{
 			/* 如果 "\r" 字符碰巧是目前 buffer 中的最后一个被读入的客户端数据，那么这次分析没有读到一个完整的行，返回 LINE_OPEN 
 			   表示还要继续读取客户端数据才能进一步分析 */
-			if ( ( checked_inde + 1 ) == read_index )
+			if ( ( checked_index + 1 ) == read_index )
 			{
 				return LINE_OPEN;
 			}
 			/**/
-			else if ( buffer [ check_index + 1 ] == '\n')
+			else if ( buffer [ checked_index + 1 ] == '\n')
 			{
 				buffer[ checked_index++ ] = '\0';
 				buffer[ checked_index++ ] = '\0';
@@ -115,7 +124,7 @@ HTTP_CODE parse_requestline( char* temp, CHECK_STATE& checkstate )
 	{
 		return BAD_REQUEST;
 	}
-	printf( "The request URL is: %d\n", utl );
+	printf( "The request URL is: %d\n", url );
 	checkstate = CHECK_STATE_HEADER;
 	return NO_REQUEST;
 }	
@@ -146,7 +155,7 @@ HTTP_CODE parse_content( char* buffer, int& checked_index, CHECK_STATE& checksta
 	LINE_STATUS linestatus = LINE_OK;
 	HTTP_CODE retcode = NO_REQUEST;
 	/*  主状态机，用与从 buffer 中取出所有的完整的行 */
-	while ( ( linestatus = parse_line( buffer, check_index, read_index ) ) == LINE_OK ) 
+	while ( ( linestatus = parse_line( buffer, checked_index, read_index ) ) == LINE_OK ) 
 	{
 		char* temp = buffer + start_line;
 		start_line = checked_index;
@@ -155,7 +164,7 @@ HTTP_CODE parse_content( char* buffer, int& checked_index, CHECK_STATE& checksta
 		{
 			case CHECK_STATE_REQUESTLINE:
 			{	
-				retcode = parser_requestline( temp, checkstate );
+				retcode = parse_requestline( temp, checkstate );
 				if ( retcode == BAD_REQUEST )
 				{
 					return BAD_REQUEST;
@@ -205,20 +214,20 @@ int main( int argc, char* argv[] )
 	int port = atoi( argv[2]);
 	
 	struct sockaddr_in address;
-	bzero( &addres, sizeof( address ) );
+	bzero( &address, sizeof( address ) );
 	address.sin_family = AF_INET;
 	inet_pton( AF_INET, ip, &address.sin_addr );
 	address.sin_port = htons( port );
 
-	int listenfd = socket( PF_INT, SOCK_STRESM, 0 );
+	int listenfd = socket( PF_INET, SOCK_STREAM, 0 );
 	assert( listenfd != -1 );
 	int ret = bind( listenfd, ( struct sockaddr* )&address, sizeof( address ) );
 	assert( ret != -1 );
 	ret = listen( listenfd, 5 );
 	assert( ret != -1 );
-	struct sockaddr_in clinent_address;
-	socklen_t clinet_addrlength = sizeof( client_address );
-	int fd = accept( listenfd, (struct sockaddr )&client_address, &client_addrlength);
+	struct sockaddr_in client_address;
+	socklen_t client_addrlength = sizeof( client_address );
+	int fd = accept( listenfd, (struct sockaddr* )&client_address, &client_addrlength);
 	if ( fd < 0 )
 	{
 		printf( "error is: %d \n", errno );
@@ -236,14 +245,34 @@ int main( int argc, char* argv[] )
 		while(1)
 		{
 			data_read = recv( fd, buffer + read_index, BUFFER_SIZE - read_index, 0 );
-			if( data_read == -1 )
+			if ( data_read == -1 )
 			{
-
+				printf( "reading failed!!! \n" );
 			}
+			else if ( data_read == 0 )
+			{
+				printf( "remote client has closed the connection!!! \n" );
+			}
+			read_index += data_read;
+			/* 分析目前已经获得的所有客户端数据 */
+			HTTP_CODE result = parse_content( buffer, checked_index, checkstate, read_index, start_line );
+			if ( result == NO_REQUEST ) /* 尚未得到一个完整的 HTTP 请求 */
+			{
+				continue;
+			}
+			else if ( result == GET_REQUEST ) /* 得到一个完整的、正确的 HTTP 请求*/
+			{
+				send( fd, szret[0], strlen( szret[0] ), 0 );
+				break;
+			}
+			else
+			{
+				send( fd, szret[1], strlen( szret[1] ), 0 );
+				break;
+			}	
 		}
 		close( fd );
 	}
 	close( listenfd );
 	return 0;
 }
-
