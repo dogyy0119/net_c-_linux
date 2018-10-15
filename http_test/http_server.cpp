@@ -124,7 +124,7 @@ HTTP_CODE parse_requestline( char* temp, CHECK_STATE& checkstate )
 	{
 		return BAD_REQUEST;
 	}
-	printf( "The request URL is: %d\n", url );
+	printf( "The request URL is: %s \n", url );
 	checkstate = CHECK_STATE_HEADER;
 	return NO_REQUEST;
 }	
