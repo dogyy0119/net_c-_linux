@@ -20,7 +20,7 @@ int setnonblocking( int fd )
 {
 	int old_option = fcntl( fd, F_GETFL );
 	int new_option = old_option | O_NONBLOCK;
-	fcntl( fd, F_SETFL, new_opion );
+	fcntl( fd, F_SETFL, new_option );
 	return old_option;
 }
 
@@ -34,7 +34,7 @@ void addfd( int epollfd, int fd, bool enable_et)
 	{
 		event.events |= EPOLLET;
 	}
-	epoll_ctl( epollfd, EPOLL_ETK_ADD, fd, &event );
+	epoll_ctl( epollfd, EPOLL_CTL_ADD, fd, &event );
 	setnonblocking( fd );
 }
 
@@ -49,7 +49,7 @@ void lt( epoll_event* events, int number, int epollfd, int listenfd )
 		{
 			struct sockaddr_in client_address;
 			socklen_t client_addrlength = sizeof( client_address );
-			int connfd = accept( listenfd, ( struct sockaddr* )&client_address, &client_addlength );
+			int connfd = accept( listenfd, ( struct sockaddr* )&client_address, &client_addrlength );
 			addfd( epollfd, connfd, false ); /* 对 connfd 禁用 ET 模式 */
 		}
 		else if ( events[i].events & EPOLLIN )
@@ -156,15 +156,15 @@ int main( int argc, char* argv[] )
 
 	while( 1 )
 	{
-		int ret = epoll_wait( opollfd, events, MAX_EVENT_NUMBER, -1 );
+		int ret = epoll_wait( epollfd, events, MAX_EVENT_NUMBER, -1 );
 		if ( ret < 0 )
 		{
 			printf( "epoll failure \n" );
 			break;
 		}	
 
-		lt( events, ret, epollfd, listenfd ); /* 使用 LT 模式 */
-		//et( events, ret, epollfd, listenfd ); /* 使用 ET 模式 */
+		//lt( events, ret, epollfd, listenfd ); /* 使用 LT 模式 */
+		et( events, ret, epollfd, listenfd ); /* 使用 ET 模式 */
 	}
 	close( listenfd );
 	
