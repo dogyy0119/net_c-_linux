@@ -58,7 +58,7 @@ int main( int argc, char* argv[] )
 	assert( ret != -1 );
 
 	ret = listen( listenfd, 5 );
-	assert( ret != -1);
+	assert( ret != -1 );
 
 	client_data* users = new client_data[ FD_LIMIT ];
 	/* 尽管我们分配了足够多的 client_data 对象，但是为了提高 poll 的性能，仍然有必要限制用户的数量 */
@@ -82,7 +82,7 @@ int main( int argc, char* argv[] )
 			break;
 		}
 		
-		for ( int i = 0; i < user_counter; ++i)
+		for ( int i = 0; i < user_counter+1; ++i)
 		{	
 			if ( ( fds[i].fd == listenfd ) && ( fds[i].revents & POLLIN) )
 			{
@@ -113,7 +113,7 @@ int main( int argc, char* argv[] )
 				fds[user_counter].revents = 0;
 				printf( "comes a new user, now have %d users \n", user_counter );
 			}
-			else if( fds[i].revents & POLLERR )
+			else if ( fds[i].revents & POLLERR )
 			{
 				printf( "get an error from %d \n", fds[i].fd );
 				char errors[ 100 ];
@@ -121,67 +121,74 @@ int main( int argc, char* argv[] )
 				socklen_t length = sizeof( errors );
 				if ( getsockopt( fds[i].fd, SOL_SOCKET, SO_ERROR, &errors, &length ) < 0 )
 				{
-					/* 如果客户端关闭连接，则服务器也关闭对应的连接，并将用户总数减1 */
-					users[fds[i].fd] = users[fds[user_counter].fd];
-					close( fds[i].fd );
-					fds[i] = fds[user_counter];
-					i--;
-					user_counter--;
-					printf( "a user left \n" );
+					printf( "get socket optoin failed \n" );
 				}
-				else if ( fds[i].revents & POLLIN )
-				{
-					int connfd = fds[i].fd;
-					memset( users[connfd].buf, '\0', BUFFER_SIZE );
-					ret = recv( connfd, users[connfd].buf, BUFFER_SIZE-1, 0 );
-					printf( "get %d bytes of client data %s fron %d \n", ret, users[connfd].buf, connfd );
-					if ( ret < 0 )
-					{
-						/* 如果读操作出错，则关闭连接*/
-						if ( errno != EAGAIN )
-						{
-							close( connfd );
-							users[fds[i].fd] = users[fds[user_counter].fd];
-							fds[i] = fds[user_counter];
-							i--;
-							user_counter--;
-						}
-					}
-					else if ( ret == 0 )
-					{}
-					else	
-					{
-						/**/
-						for ( int j = 1; j<= user_counter; ++j )
-						{
-							if ( fds[j].fd == connfd)
-							{
-								continue;
-							}
-							fds[j].events |= ~POLLIN;
-							fds[j].events |= POLLOUT;
-							users[fds[j].fd].write_buf = users[connfd].buf;
-						}
-					}
-				}
-				else if ( fds[i].revents & POLLOUT )
-				{
-					int connfd = fds[i].fd;
-					if ( !users[connfd].write_buf )
-					{
-						continue;
-					}
-					ret = send( connfd, users[connfd].write_buf, strlen( users[connfd].write_buf), 0 );
-					users[connfd].write_buf = NULL;
-					/* 写完数据后需要重新注册 fds[i] 上的可读事件 */
-					fds[i].events |= ~POLLOUT;
-					fds[i].events |= POLLIN;
-				}
-			
+				continue;
 			}
+			else if ( fds[i].revents & POLLRDHUP )
+			{
+				/* 如果客户端关闭连接，则服务器也关闭对应的连接，并将用户总数减1 */
+				users[fds[i].fd] = users[fds[user_counter].fd];
+				close( fds[i].fd );
+				fds[i] = fds[user_counter];
+				i--;
+				user_counter--;
+				printf( "a user left \n" );
+			}
+			else if ( fds[i].revents & POLLIN )
+			{
+				int connfd = fds[i].fd;
+				memset( users[connfd].buf, '\0', BUFFER_SIZE );
+				ret = recv( connfd, users[connfd].buf, BUFFER_SIZE-1, 0 );
+				printf( "get %d bytes of client data %s fron %d \n", ret, users[connfd].buf, connfd );
+				if ( ret < 0 )
+				{
+					/* 如果读操作出错，则关闭连接*/
+					if ( errno != EAGAIN )
+					{
+						close( connfd );
+						users[fds[i].fd] = users[fds[user_counter].fd];
+						fds[i] = fds[user_counter];
+						i--;
+						user_counter--;
+					}
+				}
+				else if ( ret == 0 )
+				{}
+				else	
+				{
+					/**/
+					for ( int j = 1; j<= user_counter; ++j )
+					{
+						if ( fds[j].fd == connfd)
+						{
+							continue;
+						}
+						fds[j].events |= ~POLLIN;
+						fds[j].events |= POLLOUT;
+						users[fds[j].fd].write_buf = users[connfd].buf;
+					}
+				}
+			}
+			else if ( fds[i].revents & POLLOUT )
+			{
+				int connfd = fds[i].fd;
+				if ( !users[connfd].write_buf )
+				{
+					continue;
+				}
+				ret = send( connfd, users[connfd].write_buf, strlen( users[connfd].write_buf), 0 );
+				users[connfd].write_buf = NULL;
+				/* 写完数据后需要重新注册 fds[i] 上的可读事件 */
+				fds[i].events |= ~POLLOUT;
+				fds[i].events |= POLLIN;
+			}
+			
 		}
 	}
+
 	delete [] users;
 	close( listenfd );
+
 	return 0;
 }
