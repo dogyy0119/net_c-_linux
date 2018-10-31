@@ -154,9 +154,11 @@ int main( int argc, char* argv[] )
 	assert( epollfd != -1 );
 	addfd( epollfd, listenfd, true );
 
+	printf( " ok \n" );
 	while( 1 )
 	{
 		int ret = epoll_wait( epollfd, events, MAX_EVENT_NUMBER, -1 );
+		printf( "ret : %d \n", ret );
 		if ( ret < 0 )
 		{
 			printf( "epoll failure \n" );

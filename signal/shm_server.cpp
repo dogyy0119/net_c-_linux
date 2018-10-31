@@ -52,7 +52,6 @@ int setnonblocking( int fd )
 	return old_option;
 }
 
-
 void addfd( int epollfd, int fd )
 {
 	epoll_event event;
@@ -67,7 +66,7 @@ void sig_handler( int sig )
 	int save_errno = errno;
 	int msg = sig;
 	send( sig_pipefd[1], ( char* )&msg, 1, 0 );
-	errno = sava_errno;
+	errno = save_errno;
 }
 
 void addsig( int sig, void(*handler)(int), bool restart = true )
@@ -80,7 +79,7 @@ void addsig( int sig, void(*handler)(int), bool restart = true )
 		sa.sa_flags |= SA_RESTART; 
 	}
 	sigfillset( &sa.sa_mask );
-	assert( sigaction( sig, &sa, NULL ) );
+	assert( sigaction( sig, &sa, NULL ) != -1 );
 }
 
 void del_resource()
@@ -105,7 +104,7 @@ int run_child( int idx, client_data* users, char* share_mem )
 {
 	epoll_event events[ MAX_EVENT_NUMBER ];
 	/* 子进程使用 I/O 服用技术来同时监听两个文件描述符：客户连接socket、与父进程通信的管道文件描述符 */
-	int child_epollfd = epoll_creat();
+	int child_epollfd = epoll_create( 5 );
 	assert( child_epollfd != -1 );
 
 	int connfd = users[idx].connfd;
@@ -134,8 +133,8 @@ int run_child( int idx, client_data* users, char* share_mem )
 			if ( ( sockfd == connfd ) && ( events[i].events & EPOLLIN ) ) 
 			{
 				memset( share_mem + idx*BUFFER_SIZE, '\0', BUFFER_SIZE );
-				/* 将客户数据读取到对应的读缓存中， 读缓存是共享内存的一段，它开始于idx*BUFFER_SIZE处，长度为BUFFER_SIZE 字节，因此，各个客户连接的读缓存是共享的 */
-				ret = recv( connfd, share_mem + idx*BUFFER_SIZE, BUFFER_SIZE - 1, 0 );
+				/* 将客户数据读取到对应的读缓存中，读缓存是共享内存的一段，它开始于 idx*BUFFER_SIZE处，长度为 BUFFER_SIZE 字节，因此，各个客户连接的读缓存是共享的 */
+				ret = recv( sockfd, share_mem + idx*BUFFER_SIZE, BUFFER_SIZE - 1, 0 );
 				if ( ret < 0 )
 				{
 					if ( errno != EAGAIN )
@@ -212,6 +211,9 @@ int main( int argc, char* argv[] )
 	ret = bind( listenfd, ( struct sockaddr* )&address, sizeof(address) );
 	assert( ret != -1 );
 
+	ret = listen( listenfd, 5 );
+	assert( ret != -1 );
+
 	user_count = 0;
 	users = new client_data[ USER_LIMIT + 1 ];
 	sub_process = new int [ PROCESS_LIMIT ];
@@ -225,7 +227,7 @@ int main( int argc, char* argv[] )
 	assert( epollfd != -1 );
 	addfd( epollfd, listenfd );
 
-	ret = socketpait( PF_UNIX, SOCK_STREAM, 0 , sig_pipefd );
+	ret = socketpair( PF_UNIX, SOCK_STREAM, 0 , sig_pipefd );
 	assert( ret != -1 );
 	
 	setnonblocking( sig_pipefd[1] );
@@ -246,7 +248,7 @@ int main( int argc, char* argv[] )
 	assert( ret != -1 );
 
 	share_mem = ( char* )mmap( NULL, USER_LIMIT * BUFFER_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shmfd, 0 );
-	assert( share_mem != MAX_FAILED );
+	assert( share_mem != MAP_FAILED );
 	
 	close( shmfd );
 
@@ -259,6 +261,7 @@ int main( int argc, char* argv[] )
 			break;
 		}
 
+		printf( "number is %d \n", number );
 		for ( int i=0; i<number; i++ )
 		{
 			int sockfd = events[i].data.fd;
@@ -267,7 +270,7 @@ int main( int argc, char* argv[] )
 			{
 				struct sockaddr_in client_address;
 				socklen_t client_addrlength = sizeof( client_address );
-				int connfd = accept( listenfd, ( struct sockaddr*)&client_address, client_addrlength );
+				int connfd = accept( listenfd, ( struct sockaddr*)&client_address, &client_addrlength );
 				
 				if ( connfd < 0 )
 				{
@@ -293,6 +296,7 @@ int main( int argc, char* argv[] )
 				assert( ret != -1 );
 			
 				pid_t pid = fork();
+				printf( "new connection pid: %d \n", pid );
 				if ( pid < 0 )
 				{
 					close( connfd );
@@ -313,20 +317,117 @@ int main( int argc, char* argv[] )
 				{
 					close( connfd );
 					close( users[user_count].pipefd[1] );
-					addfd( epollfd, suers[user_count].pipefd[0] );
+					addfd( epollfd, users[user_count].pipefd[0] );
 					users[ user_count ].pid = pid;
 					/* 记录新的客户连接在数组users中的索引值，建立进程pid和该索引值之间的映射关系 */
 					
 					sub_process[pid] = user_count;
-					user_count++；
+					user_count++;
 				}
 			}
 			/* 处理信号事件 */
-			else if ()
+			else if ( ( sockfd == sig_pipefd[0] ) && ( events[i].events & EPOLLIN ) )
 			{
-
+				printf( "***************** signal need be handle !!! \n" );
+				int sig;
+				char signals[1024];
+				ret = recv( sig_pipefd[0], signals, sizeof( signals ), 0 );
+				if ( ret == -1 )
+				{
+					continue;
+				}
+				else if ( ret == 0 )
+				{
+					continue;
+				}
+				else
+				{
+					for ( int i=0; i<ret; ++i )
+					{
+						switch( signals[i] )
+						{
+							/* 子进程退出，表示有某个客户端关闭了连接 */
+							case SIGCHLD:
+							{
+								pid_t pid;
+								int stat;
+								while( ( pid = waitpid( -1, &stat, WNOHANG ) ) > 0 )
+								{
+									/* 用子进程的 pid 取得被关闭客户端的连接编号 */
+									int del_user = sub_process[pid];
+									sub_process[pid] = -1;
+									if ( ( del_user < 0 ) && ( del_user > USER_LIMIT ) ) 
+									{
+										continue;
+									}
+									
+									/* 清楚第 del_user 个客户连接使用的相关数据 */
+									epoll_ctl( epollfd, EPOLL_CTL_DEL, users[del_user].pipefd[0], 0 );
+									close( users[del_user].pipefd[0] );
+									users[del_user] = users[--user_count];
+									sub_process[users[del_user].pid] = del_user;
+								}
+								if ( terminate && user_count == 0 )
+								{
+									stop_server = true;
+								}
+								break;
+							}
+							case SIGTERM:
+							case SIGINT:
+							{
+								/* 结束服务器程序 */
+								printf( "kill all the child now \n" );
+								if ( user_count == 0 )
+								{
+									stop_server = true;
+									break;
+								}
+								for ( int i=0; i<user_count; i++ )
+								{
+									int pid = users[i].pid;
+									kill( pid, SIGTERM);
+								}
+								terminate = true;
+								break;
+							}
+							default:
+							{
+								break;
+							}
+						}
+					}
+				}
+			}
+			else if ( events[i].events & EPOLLIN )
+			{
+				int child = 0;
+				/* 读取管道数据， child变量记录了是哪个客户连接有数据到达 */
+				ret = recv( sockfd, ( char* )& child, sizeof( child ), 0 );
+				printf( "read data from child accross pipe \n" );
+				if ( ret == -1 )
+				{
+					continue;
+				}
+				else if ( ret == 0 )
+				{
+					continue;
+				}
+				else
+				{
+					/* 向除负责处理第 child 个客户连接的子进程之外的其他子进程发送消息，通知他们有客户数据要写 */
+					for ( int j=0; j < user_count; ++j )
+					{
+						if ( users[j].pipefd[0] != sockfd )
+						{
+							printf( "send data to child accross pipe \n" );
+							send( users[j].pipefd[0], ( char* )&child, sizeof( child ), 0 );
+						}
+					}
+				}
 			}
 		}
 	}
-
+	del_resource();
+	return 0;
 }
